@@ -398,7 +398,7 @@ def calcular_porcentaje(df, col, tipo):
         resumen["PORCENTAJE"] = (100 * resumen["TOTAL_SI"] / resumen["TOTAL_VALIDOS"]).round(2)
 
     elif tipo == "Conflictos o enfrentamientos":
-        df_base = df[df["BP2_2"] == 1].copy()
+        df_base = df[df["BP2_1"] == 1].copy()
         if df_base.empty:
             return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE"])
         resumen = df_base.groupby(["ANIO", "TRIMESTRE"]).apply(lambda g: pd.Series({
