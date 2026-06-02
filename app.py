@@ -229,7 +229,7 @@ def cargar_datos_base():
     ]
 
     columnas_necesarias = (
-        ["ANIO", "TRIMESTRE", "CD", "NOM_CD", "FAC_SEL"]
+        ["ANIO", "TRIMESTRE", "CD", "NOM_CD", "FAC_SEL", "BP2_1"]
         + list(percepcion_lugares.keys())
         + list(cambios_habitos.keys())
         + list(set(efectividad_autoridades_2024_2025.keys()) | set(efectividad_autoridades_2021_2023.keys()))
@@ -249,7 +249,7 @@ def cargar_datos_base():
         "FAC_SEL": "float32"
     }
     for col in columnas_necesarias:
-        if col not in ["ANIO", "TRIMESTRE", "CD", "NOM_CD", "FAC_SEL"] + ["BP2_1"]:
+        if col not in ["ANIO", "TRIMESTRE", "CD", "NOM_CD", "FAC_SEL", "BP2_1"]:
             dtype_dict[col] = "Int8"
 
     dfs = []
@@ -357,12 +357,22 @@ with col2:
         nombres_ciudades,
         index=1 if len(nombres_ciudades) > 1 else 0
     )
+#  Validación de selección idéntica
+if ciudad_1 == ciudad_2:
+    st.info("💡 Has seleccionado la misma ubicación para ambas comparaciones. La gráfica mostrará una sola línea superpuesta.")
 
 variable_col = [k for k, v in opciones.items() if v == variable_sel][0]
 
 # --- Filtrado ---
-df_ciudad1 = df[df["NOMBRE_CIUDAD"] == ciudad_1].copy()
-df_ciudad2 = df[df["NOMBRE_CIUDAD"] == ciudad_2].copy()
+if ciudad_1 == "TOTAL NACIONAL":
+    df_ciudad1 = df.copy()
+else:
+    df_ciudad1 = df[df["NOMBRE_CIUDAD"] == ciudad_1].copy()
+
+if ciudad_2 == "TOTAL NACIONAL":
+    df_ciudad2 = df.copy()
+else:
+    df_ciudad2 = df[df["NOMBRE_CIUDAD"] == ciudad_2].copy()
 
 if tipo_variable == "Efectividad de autoridades (2024 en delante)":
     df_ciudad1 = df_ciudad1[df_ciudad1["ANIO"] >= 2024]
@@ -374,40 +384,46 @@ elif tipo_variable == "Efectividad de autoridades (2021–2023)":
 
 # --- Función calcular_porcentaje (igual que antes) ---
 def calcular_porcentaje(df, col, tipo):
-    # [Misma función que ya tienes, sin cambios]
+    # 1. Conocimiento de programas e Incivilidades
     if tipo in ["Conocimiento de programas de prevención contra la violencia/delincuencia", "Incivilidades en los alrededores de su vivienda"]:
         df_val = df[df[col].isin([1, 2, 9])].copy()
         if df_val.empty:
-            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE"])
-        df_val["PESO_SI"] = (df_val[col] == 1) * df_val["FAC_SEL"]
+            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE", "PERIODO"])
+        df_val["PESO_SI"] = (df_val[col] == 1).astype(int) * df_val["FAC_SEL"]
         resumen = df_val.groupby(["ANIO", "TRIMESTRE"]).agg(
-            TOTAL_VALIDOS=('FAC_SEL', 'sum'),
-            TOTAL_SI=('PESO_SI', 'sum')
+            TOTAL_VALIDOS=("FAC_SEL", "sum"),
+            TOTAL_SI=("PESO_SI", "sum")
         ).reset_index()
         resumen["PORCENTAJE"] = (100 * resumen["TOTAL_SI"] / resumen["TOTAL_VALIDOS"]).round(2)
 
+    # 2. Problemas que enfrenta la ciudad
     elif tipo == "Problemas que enfrenta la ciudad":
         df_val = df[df[col].isin([0, 1])].copy()
         if df_val.empty:
-            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE"])
-        df_val["PESO_SI"] = (df_val[col] == 1) * df_val["FAC_SEL"]
+            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE", "PERIODO"])
+        df_val["PESO_SI"] = (df_val[col] == 1).astype(int) * df_val["FAC_SEL"]
         resumen = df_val.groupby(["ANIO", "TRIMESTRE"]).agg(
-            TOTAL_VALIDOS=('FAC_SEL', 'sum'),
-            TOTAL_SI=('PESO_SI', 'sum')
+            TOTAL_VALIDOS=("FAC_SEL", "sum"),
+            TOTAL_SI=("PESO_SI", "sum")
         ).reset_index()
         resumen["PORCENTAJE"] = (100 * resumen["TOTAL_SI"] / resumen["TOTAL_VALIDOS"]).round(2)
 
+    # 3. Conflictos o enfrentamientos (OPTIMIZADO)
     elif tipo == "Conflictos o enfrentamientos":
         df_base = df[df["BP2_1"] == 1].copy()
         if df_base.empty:
-            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE"])
-        resumen = df_base.groupby(["ANIO", "TRIMESTRE"]).apply(lambda g: pd.Series({
-          "TOTAL_CONFLICTOS": g["FAC_SEL"].sum(),
-          "TOTAL_SI": g.loc[g[col] == 1, "FAC_SEL"].sum()
-        })
-        ).reset_index()
-        resumen["PORCENTAJE"] = (100* resumen["TOTAL_SI"]/ resumen["TOTAL_CONFLICTOS"]).round(2)
+            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE", "PERIODO"])
 
+        # Calculamos el peso solo para el conflicto específico seleccionado
+        df_base["PESO_SI"] = (df_base[col] == 1).astype(int) * df_base["FAC_SEL"]
+
+        resumen = df_base.groupby(["ANIO", "TRIMESTRE"]).agg(
+            TOTAL_CONFLICTOS=("FAC_SEL", "sum"),
+            TOTAL_SI=("PESO_SI", "sum")
+        ).reset_index()
+        resumen["PORCENTAJE"] = (100 * resumen["TOTAL_SI"] / resumen["TOTAL_CONFLICTOS"]).round(2)
+
+    # 4. Resto de variables (Percepción, Hábitos, Efectividad, Expectativas)
     else:
         if tipo in ["Percepción de inseguridad", "Cambio de hábitos"]:
             df_val = df[df[col].isin([1, 2])].copy()
@@ -415,40 +431,52 @@ def calcular_porcentaje(df, col, tipo):
             df_val = df[df[col].isin([1, 2, 3, 4, 9])].copy()
 
         if df_val.empty:
-            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE"])
+            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE", "PERIODO"])
 
         if tipo == "Percepción de inseguridad":
-            df_val["PESO_SI"] = (df_val[col] == 2) * df_val["FAC_SEL"]
+            df_val["PESO_SI"] = (df_val[col] == 2).astype(int) * df_val["FAC_SEL"]
         elif tipo == "Cambio de hábitos":
-            df_val["PESO_SI"] = (df_val[col] == 1) * df_val["FAC_SEL"]
+            df_val["PESO_SI"] = (df_val[col] == 1).astype(int) * df_val["FAC_SEL"]
         elif tipo in ["Efectividad de autoridades (2024 en delante)", "Efectividad de autoridades (2021–2023)", "Efectividad del gobierno para resolver problemas"]:
-            df_val["PESO_SI"] = df_val[col].isin([1, 2]) * df_val["FAC_SEL"]
+            df_val["PESO_SI"] = (df_val[col].isin([1, 2])).astype(int) * df_val["FAC_SEL"]
         elif tipo == "Expectativas sobre delincuencia":
-            df_val["PESO_IGUAL"] = (df_val[col] == 3) * df_val["FAC_SEL"]
-            df_val["PESO_EMPEORARA"] = (df_val[col] == 4) * df_val["FAC_SEL"]
+            df_val["PESO_IGUAL"] = (df_val[col] == 3).astype(int) * df_val["FAC_SEL"]
+            df_val["PESO_EMPEORARA"] = (df_val[col] == 4).astype(int) * df_val["FAC_SEL"]
         else:
-            return pd.DataFrame()
+            return pd.DataFrame(columns=["ANIO", "TRIMESTRE", "PORCENTAJE", "PERIODO"])
 
-        resumen = df_val.groupby(["ANIO", "TRIMESTRE"]).apply(
-            lambda g: pd.Series({
-                "TOTAL_VALIDOS": g["FAC_SEL"].sum(),
-                "TOTAL_SI": g["PESO_SI"].sum() if "PESO_SI" in g else 0,
-                "TOTAL_IGUAL": g["PESO_IGUAL"].sum() if "PESO_IGUAL" in g else 0,
-                "TOTAL_EMPEORARA": g["PESO_EMPEORARA"].sum() if "PESO_EMPEORARA" in g else 0
-            })
-        ).reset_index()
+        # Agregación dinámica segura (Evita el .apply depreciado en Pandas 2.x)
+        agg_funcs = {"FAC_SEL": "sum"}
+        if "PESO_SI" in df_val.columns: agg_funcs["PESO_SI"] = "sum"
+        if "PESO_IGUAL" in df_val.columns: agg_funcs["PESO_IGUAL"] = "sum"
+        if "PESO_EMPEORARA" in df_val.columns: agg_funcs["PESO_EMPEORARA"] = "sum"
 
-        if "PESO_SI" in df_val:
+        resumen = df_val.groupby(["ANIO", "TRIMESTRE"]).agg(**agg_funcs).reset_index()
+        resumen = resumen.rename(columns={"FAC_SEL": "TOTAL_VALIDOS"})
+
+        # Asignar valores por defecto si la columna no existe en este grupo
+        resumen["TOTAL_SI"] = resumen["PESO_SI"] if "PESO_SI" in resumen.columns else 0
+        resumen["TOTAL_IGUAL"] = resumen["PESO_IGUAL"] if "PESO_IGUAL" in resumen.columns else 0
+        resumen["TOTAL_EMPEORARA"] = resumen["PESO_EMPEORARA"] if "PESO_EMPEORARA" in resumen.columns else 0
+
+        # Limpieza
+        cols_to_drop = [c for c in ["PESO_SI", "PESO_IGUAL", "PESO_EMPEORARA"] if c in resumen.columns]
+        resumen = resumen.drop(columns=cols_to_drop)
+
+        if "TOTAL_SI" in resumen.columns:
             resumen["PORCENTAJE"] = (100 * resumen["TOTAL_SI"] / resumen["TOTAL_VALIDOS"]).round(2)
         else:
-            resumen["PORCENTAJE"] = 0
+            resumen["PORCENTAJE"] = 0.0
 
         if tipo == "Expectativas sobre delincuencia":
             resumen["PORCENTAJE_IGUAL"] = (100 * resumen["TOTAL_IGUAL"] / resumen["TOTAL_VALIDOS"]).round(2)
             resumen["PORCENTAJE_EMPEORARA"] = (100 * resumen["TOTAL_EMPEORARA"] / resumen["TOTAL_VALIDOS"]).round(2)
             resumen["PORCENTAJE_TOTAL"] = (100 * (resumen["TOTAL_IGUAL"] + resumen["TOTAL_EMPEORARA"]) / resumen["TOTAL_VALIDOS"]).round(2)
 
+    # Crear periodo y limpiar posibles infinitos o NaN
     resumen["PERIODO"] = resumen["ANIO"].astype(str) + "-" + resumen["TRIMESTRE"].astype(str)
+    resumen = resumen.fillna(0).replace([float('inf'), float('-inf')], 0)
+
     return resumen.sort_values(["ANIO", "TRIMESTRE"])
 
 # --- Mostrar resultados ---
